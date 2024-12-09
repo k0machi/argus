@@ -6,7 +6,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import reduce
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 from uuid import UUID
 from slugify import slugify
 
@@ -14,6 +14,7 @@ from argus.backend.models.plan import ArgusReleasePlan
 from argus.backend.models.web import ArgusGroup, ArgusRelease, ArgusTest, ArgusUserView, User
 from argus.backend.service.test_lookup import TestLookup
 from argus.backend.service.views import UserViewService
+from argus.backend.util.common import chunk
 
 
 LOGGER = logging.getLogger(__name__)
@@ -59,6 +60,11 @@ class CopyPlanPayload:
     replacements: dict[str, str]
     targetReleaseId: str
     targetReleaseName: str
+
+class PlanTriggerPayload(TypedDict):
+    version: str
+    common_params: dict[str, str]
+    params: list[dict[str, str]]
 
 
 class PlannerServiceException(Exception):
@@ -438,3 +444,22 @@ class PlanningService:
                 ent["group"] = group.pretty_name or group.name
 
         return mapped
+    
+    def trigger_jobs(self, payload: PlanTriggerPayload) -> bool:
+        plans: list[ArgusReleasePlan] = list(ArgusReleasePlan.filter(target_version=payload["version"]).all())
+
+        if len(plans) == 0:
+            return False, "No plans to trigger"
+
+        common_params = payload.get("common_params", {})
+        test_ids = [test_id for plan in plans for test_id in plan.tests]
+        group_ids = [group_id for plan in plans for group_id in plan.groups]
+
+        tests = []
+        for batch in chunk(test_ids):
+            tests.extend(ArgusTest.filter(id__in=batch).all())
+
+        for batch in (chunk(group_ids)):
+            tests.extend(ArgusTest.filter(group_id__in=batch).allow_filtering().all())
+
+        LOGGER.info("Will trigger %s tests...", len(tests))

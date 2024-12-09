@@ -69,6 +69,10 @@ class JenkinsService:
 
         return params
 
+    def latest_build(self, build_id: str):
+        job_info = self._jenkins.get_job_info(name=build_id)
+        
+
     def get_releases_for_clone(self, test_id: str):
         test_id = UUID(test_id)
         # TODO: Filtering based on origin location / user preferences
